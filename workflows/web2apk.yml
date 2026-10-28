@@ -1,0 +1,98 @@
+name: Web to APK
+
+# Dipicu oleh bot malsz2app lewat server.js → triggerWeb2ApkWorkflow()
+# Input WAJIB sama persis dengan yang dikirim server.js:
+#   web_url, app_name, icon_url
+on:
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: "URL web yang dibungkus jadi APK"
+        required: true
+        type: string
+      app_name:
+        description: "Nama aplikasi"
+        required: false
+        default: "WebApp"
+        type: string
+      icon_url:
+        description: "URL icon PNG (opsional)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build WebView APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Siapkan icon
+        run: |
+          set -e
+          RES="web2apk-template/app/src/main/res/mipmap-xxxhdpi"
+          mkdir -p "$RES"
+          if [ -n "${{ inputs.icon_url }}" ]; then
+            curl -fL --retry 3 "${{ inputs.icon_url }}" -o "$RES/ic_launcher.png" || true
+          fi
+          if [ ! -s "$RES/ic_launcher.png" ]; then
+            # fallback: PNG 1x1 supaya build tetap jalan
+            echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==" \
+              | base64 -d > "$RES/ic_launcher.png"
+            echo "::warning::icon gagal diunduh, dipakai placeholder"
+          fi
+          ls -la "$RES"
+
+      - name: Set nama aplikasi
+        run: |
+          cd web2apk-template
+          python3 - <<'PY'
+          import re, pathlib
+          name = """${{ inputs.app_name }}""".replace('"', "").replace("'", "").strip() or "WebApp"
+          p = pathlib.Path("app/src/main/res/values/strings.xml")
+          t = p.read_text(encoding="utf-8")
+          t = re.sub(r'<string name="app_name">.*?</string>',
+                     '<string name="app_name">' + name + '</string>', t)
+          p.write_text(t, encoding="utf-8")
+          print("app_name =", name)
+          PY
+
+      - name: Build APK
+        working-directory: web2apk-template
+        run: |
+          set -e
+          gradle assembleRelease --no-daemon \
+            -PwebUrl="${{ inputs.web_url }}" \
+            -PappName="${{ inputs.app_name }}"
+
+      - name: Kumpulkan APK
+        run: |
+          set -e
+          mkdir -p out
+          find web2apk-template/app/build/outputs/apk -name "*.apk" -exec cp {} out/ \;
+          ls -la out
+          cd out
+          zip -r ../web2apk-output.zip ./*.apk
+          cd ..
+          unzip -l web2apk-output.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web2apk-output
+          path: web2apk-output.zip
+          if-no-files-found: error
