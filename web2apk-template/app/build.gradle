@@ -1,0 +1,38 @@
+plugins { id 'com.android.application' }
+
+// Nilai diisi dari workflow: -PwebUrl="..." -PappName="..."
+def webUrl = (project.findProperty("webUrl") ?: "https://example.com").toString()
+def appName = (project.findProperty("appName") ?: "WebApp").toString()
+
+android {
+    namespace 'app.malsz.web2apk'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "app.malsz.web2apk"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        buildConfigField "String", "WEB_URL", "\"${webUrl}\""
+        buildConfigField "String", "APP_NAME", "\"${appName}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // APK release ditandatangani dengan debug key supaya langsung bisa
+            // di-install tanpa setup keystore.
+            signingConfig signingConfigs.debug
+        }
+    }
+}
