@@ -1,0 +1,100 @@
+name: Flutter Build APK
+
+# Dipicu oleh bot malsz2app lewat server.js → triggerWorkflow()
+# Input WAJIB sama persis dengan yang dikirim server.js:
+#   zip_url, tag, build_type
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "URL ZIP source project (asset dari GitHub Release)"
+        required: true
+        type: string
+      tag:
+        description: "Tag release (untuk penamaan file output)"
+        required: false
+        default: ""
+        type: string
+      build_type:
+        description: "release | debug"
+        required: false
+        default: "release"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Unduh & ekstrak source project
+        run: |
+          set -e
+          mkdir -p project && cd project
+          # Repo privat butuh token; repo publik cukup URL polos.
+          if [ -n "${{ secrets.GH_TOKEN }}" ]; then
+            curl -fL --retry 3 -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+              "${{ inputs.zip_url }}" -o source.zip
+          else
+            curl -fL --retry 3 "${{ inputs.zip_url }}" -o source.zip
+          fi
+          unzip -o source.zip -d .
+          rm -f source.zip
+
+          # Kadang ZIP berisi satu folder di dalam — naikkan ke atas.
+          if [ ! -f pubspec.yaml ]; then
+            inner="$(find . -maxdepth 3 -name pubspec.yaml | head -1)"
+            if [ -n "$inner" ]; then
+              d="$(dirname "$inner")"
+              shopt -s dotglob
+              mv "$d"/* . 2>/dev/null || true
+              rmdir "$d" 2>/dev/null || true
+            fi
+          fi
+          if [ ! -f pubspec.yaml ]; then
+            echo "::error::pubspec.yaml tidak ditemukan di dalam ZIP"
+            ls -la
+            exit 1
+          fi
+          echo "--- isi project ---"
+          ls -la
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.24.5"
+          cache: true
+
+      - name: Build APK
+        working-directory: project
+        run: |
+          set -e
+          flutter pub get
+          if [ "${{ inputs.build_type }}" = "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Kumpulkan APK
+        run: |
+          set -e
+          mkdir -p out
+          find project/build/app/outputs -name "*.apk" -exec cp {} out/ \;
+          ls -la out
+          cd out
+          zip -r ../flutter-apk-output.zip ./*.apk
+          cd ..
+          echo "--- isi artifact ---"
+          unzip -l flutter-apk-output.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk-output
+          path: flutter-apk-output.zip
+          if-no-files-found: error
